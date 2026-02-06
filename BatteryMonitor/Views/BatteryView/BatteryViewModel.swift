@@ -1,28 +1,27 @@
-	//
-	//  BatteryViewModel.swift
-	//  BatteryMonitor
-	//
-	//  Created by Vladimir Amelkin on 06.02.2026.
-	//
-
 import SwiftUI
 import Combine
 
-	// MARK: BatteryViewModel
+// MARK: BatteryViewModel
 class BatteryViewModel: ObservableObject {
 	private let batteryManager: BatteryManagerProtocol
+	private var cancellables = Set<AnyCancellable>()
 	
 	@Published private(set) var currentCapacityPercentage: Int = 0
 	@Published private(set) var powerSource: String? = nil
-	@Published private(set) var isCharging: Bool? = nil  // ← новое свойство
+	@Published private(set) var isCharging: Bool? = nil
 	
 	init(batteryManager: BatteryManagerProtocol = BatteryManager.shared) {
 		self.batteryManager = batteryManager
 		updateBatteryState()
 		
-		Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-			self?.updateBatteryState()
-		}
+		
+		NotificationCenter.default.publisher(for: .batteryStateUpdated)
+			.receive(on: RunLoop.main)
+			.map { $0.userInfo?["state"] as? BatteryState }
+			.compactMap { $0 }
+			.sink { [weak self] _ in self?.updateBatteryState() }
+			.store(in: &cancellables)
+		
 	}
 	
 	func updateBatteryState() {

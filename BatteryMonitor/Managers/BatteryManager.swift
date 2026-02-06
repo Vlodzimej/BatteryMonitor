@@ -1,13 +1,18 @@
-	//
-	//  BatteryManager.swift
-	//  BatteryMonitor
-	//
-	//  Created by Vladimir Amelkin on 05.02.2026.
-	//
+//
+//  BatteryManager.swift
+//  BatteryMonitor
+//
+//  Created by Vladimir Amelkin on 05.02.2026.
+//
 
 import Foundation
 import IOKit.ps
 import UserNotifications
+
+// MARK: - Notification.Name Extension
+extension Notification.Name {
+	static let batteryStateUpdated = Notification.Name("batteryStateUpdated")
+}
 
 // MARK: - BatteryState
 struct BatteryState: Equatable {
@@ -22,7 +27,7 @@ protocol BatteryManagerProtocol {
 	func getBatteryState() -> BatteryState?
 }
 
-	// MARK: - BatteryManager
+// MARK: - BatteryManager
 class BatteryManager: BatteryManagerProtocol {
 	
 	static let shared: BatteryManagerProtocol = BatteryManager()
@@ -34,8 +39,6 @@ class BatteryManager: BatteryManagerProtocol {
 		manager.handlePowerSourceChanged()
 	}
 	
-	private var notificationSentForBatteryLevel: Bool = false
-	
 	init() {
 		initialize()
 		requestNotificationPermission()
@@ -46,14 +49,17 @@ class BatteryManager: BatteryManagerProtocol {
 		if let runLoopSource = IOPSNotificationCreateRunLoopSource(BatteryManager.powerSourceChangedCallback, context)?.takeRetainedValue() {
 			CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .defaultMode)
 			Unmanaged<BatteryManager>.fromOpaque(context).release()
-			print("Подписка на события питания активна.")
+			debugPrint("Подписка на события питания активна.")
 		}
 	}
 	
 	private func handlePowerSourceChanged() {
 		guard let state = getBatteryState() else { return }
-		print("Батарея: \(state.capacity ?? 0)%, заряжается: \(state.isCharging != false)")
+		debugPrint("Батарея: \(state.capacity ?? 0)%, заряжается: \(state.isCharging != false)")
 		checkAndSendBatteryNotification(state: state)
+		
+		// 🔔 Post notification to notify observers (e.g., BatteryViewModel)
+		NotificationCenter.default.post(name: .batteryStateUpdated, object: nil, userInfo: ["state": state])
 	}
 	
 	func getBatteryState() -> BatteryState? {
@@ -74,14 +80,13 @@ class BatteryManager: BatteryManagerProtocol {
 		return nil
 	}
 	
-		// MARK: - Notification Support
-	
+	// MARK: - Notification Support
 	private func requestNotificationPermission() {
 		UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
 			if let error = error {
-				print("⚠️ Ошибка запроса разрешения на уведомления: \(error)")
+				debugPrint("⚠️ Ошибка запроса разрешения на уведомления: \(error)")
 			} else {
-				print("✅ Уведомления \(granted ? "разрешены" : "запрещены")")
+				debugPrint("✅ Уведомления \(granted ? "разрешены" : "запрещены")")
 			}
 		}
 	}
@@ -94,13 +99,8 @@ class BatteryManager: BatteryManagerProtocol {
 		let percentage = Int(Double(capacity) / Double(maxCapacity) * 100)
 		let isCharging = state.isCharging ?? false
 		
-			// Отправляем оповещение только один раз при достижении ≥80% и зарядке
-		if percentage >= 80 && isCharging && !notificationSentForBatteryLevel {
+		if percentage >= 80 && isCharging {
 			sendBatteryNotification(percentage: percentage)
-			notificationSentForBatteryLevel = true
-		} else if percentage < 80 {
-				// Сброс флага, когда батарея разряжается ниже 80%
-			notificationSentForBatteryLevel = false
 		}
 	}
 	
@@ -112,18 +112,15 @@ class BatteryManager: BatteryManagerProtocol {
 		content.sound = .default
 		content.categoryIdentifier = "battery.charge.full"
 		
-			// Use UNNotificationTimeDateTrigger for latest API\
 		let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
 		let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
 		UNUserNotificationCenter.current().add(request) { error in
 			if let error = error {
-				print("❌ Ошибка при отправке уведомления: \(error)")
+				debugPrint("❌ Ошибка при отправке уведомления: \(error)")
 			} else {
-				print("✅ Уведомление отправлено: Батарея — \(percentage)%")
+				debugPrint("✅ Уведомление отправлено: Батарея — \(percentage)%")
 			}
 		}
 	}
 }
-
-
 

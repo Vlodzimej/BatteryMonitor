@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct BatteryMonitorApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-    }
+	var body: some Scene {
+		WindowGroup {
+			ContentView()
+				.frame(width: 300, height: 300)
+		}
+		.windowResizability(.contentSize)
+	}
 }

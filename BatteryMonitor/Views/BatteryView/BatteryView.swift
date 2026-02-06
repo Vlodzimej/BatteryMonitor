@@ -27,11 +27,12 @@ struct BatteryView: View {
 					.foregroundColor(.secondary)
 			}
 		}
+		.fixedSize()
+		.frame(width: 96, height: 128)
 		.padding()
 		.background(
 			RoundedRectangle(cornerRadius: 15)
 				.foregroundColor(.secondary.opacity(0.1))
 		)
-		.frame(width: 200, height: 200)
 	}
 }
