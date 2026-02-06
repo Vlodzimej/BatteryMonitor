@@ -1,137 +1,129 @@
-//
-//  BatteryManager.swift
-//  BatteryMonitor
-//
-//  Created by Vladimir Amelkin on 05.02.2026.
-//
+	//
+	//  BatteryManager.swift
+	//  BatteryMonitor
+	//
+	//  Created by Vladimir Amelkin on 05.02.2026.
+	//
 
 import Foundation
 import IOKit.ps
 import UserNotifications
 
-// MARK: BatteryState
+// MARK: - BatteryState
 struct BatteryState: Equatable {
-    let capacity: Int?
-    let maxCapacity: Int?
-    let powerSource: String?
+	let capacity: Int?
+	let maxCapacity: Int?
+	let powerSource: String?
+	let isCharging: Bool?
 }
 
-// MARK: BatteryManagerProtocol
+// MARK: - BatteryManagerProtocol
 protocol BatteryManagerProtocol {
-    func getBatteryState() -> BatteryState?
+	func getBatteryState() -> BatteryState?
 }
 
-// MARK: BatteryManager
+	// MARK: - BatteryManager
 class BatteryManager: BatteryManagerProtocol {
-    
-    static let shared: BatteryManagerProtocol = BatteryManager()
-    
-    // C-compatible callback that does not capture Swift context
-    private static let powerSourceChangedCallback: IOPowerSourceCallbackType = { context in
-        // Recover the BatteryManager instance from the opaque context pointer
-        guard let context = context else { return }
-        let unmanaged = Unmanaged<BatteryManager>.fromOpaque(context)
-        let manager = unmanaged.takeUnretainedValue()
-        manager.handlePowerSourceChanged()
-    }
-    
-    private var lastLowNotificationLevel: Int? = nil
-    private var lastHighNotificationLevel: Int? = nil
-    
-    init() {
-        initialize()
-        requestNotificationPermissions()
-    }
-    
-    // Ключевые параметры (Ключи)
-    // Для детальной информации используйте следующие ключи в словаре description:
-    // kIOPSCurrentCapacityKey: Текущий уровень заряда (Int).
-    // kIOPSMaxCapacityKey: Максимальная емкость (Int).
-    // kIOPSInternalBatteryKey: Проверка, является ли батарея встроенной.
-    // kIOPSPowerSourceStateKey: Источник питания (от сети/батареи).
-
-    private func requestNotificationPermissions() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
-            if let error = error {
-                print("Ошибка запроса разрешений на уведомления: \(error)")
-            } else {
-                print("Разрешения на уведомления: \(granted ? "предоставлены" : "отклонены")")
-            }
-        }
-    }
-    
-    private func initialize() {
-        // Prepare opaque context with a retained reference to self
-        let context = Unmanaged.passRetained(self).toOpaque()
-        if let runLoopSource = IOPSNotificationCreateRunLoopSource(BatteryManager.powerSourceChangedCallback, context)?.takeRetainedValue() {
-            
-            // Добавление в текущий RunLoop (обычно Main)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .defaultMode)
-            // Balance the retain performed when creating the context; the run loop source holds its own reference now
-            Unmanaged<BatteryManager>.fromOpaque(context).release()
-            
-            print("Подписка на события питания активна.")
-        }
-    }
-    
-    // Instance handler invoked from the C callback
-    private func handlePowerSourceChanged() {
-        guard let state = self.getBatteryState(),
-              let capacity = state.capacity,
-              let maxCapacity = state.maxCapacity,
-              maxCapacity > 0 else { return }
-        
-        let percentage = Int(Double(capacity) / Double(maxCapacity) * 100)
-        
-        // Notify about threshold crossings
-        checkAndNotifyAboutBatteryLevel(percentage)
-        
-        print("Батарея: \(percentage)%")
-    }
-    
-    private func checkAndNotifyAboutBatteryLevel(_ capacity: Int) {
-        guard capacity <= 20 || capacity >= 80 else { return }
-        
-        if capacity <= 20 {
-            if lastLowNotificationLevel != capacity {
-                lastLowNotificationLevel = capacity
-                lastHighNotificationLevel = nil
-                showNotification(title: "Низкий заряд батареи", body: "Заряд батареи составляет \(capacity)%")
-            }
-        } else if capacity >= 80 {
-            if lastHighNotificationLevel != capacity {
-                lastHighNotificationLevel = capacity
-                lastLowNotificationLevel = nil
-                showNotification(title: "Высокий заряд батареи", body: "Заряд батареи составляет \(capacity)%")
-            }
-        }
-    }
-    
-    private func showNotification(title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
-    }
-    
-    func getBatteryState() -> BatteryState? {
-        let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
-        let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
-        
-        for source in sources {
-            if let description = IOPSGetPowerSourceDescription(snapshot, source).takeUnretainedValue() as? [String: Any] {
-                let batteryState = BatteryState(
-                    capacity: description[kIOPSCurrentCapacityKey] as? Int,
-                    maxCapacity: description[kIOPSMaxCapacityKey] as? Int,
-                    powerSource: description[kIOPSPowerSourceStateKey] as? String
-                )
-                return batteryState
-            }
-        }
-        return nil
-    }
+	
+	static let shared: BatteryManagerProtocol = BatteryManager()
+	
+	private static let powerSourceChangedCallback: IOPowerSourceCallbackType = { context in
+		guard let context = context else { return }
+		let unmanaged = Unmanaged<BatteryManager>.fromOpaque(context)
+		let manager = unmanaged.takeUnretainedValue()
+		manager.handlePowerSourceChanged()
+	}
+	
+	private var notificationSentForBatteryLevel: Bool = false
+	
+	init() {
+		initialize()
+		requestNotificationPermission()
+	}
+	
+	private func initialize() {
+		let context = Unmanaged.passRetained(self).toOpaque()
+		if let runLoopSource = IOPSNotificationCreateRunLoopSource(BatteryManager.powerSourceChangedCallback, context)?.takeRetainedValue() {
+			CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .defaultMode)
+			Unmanaged<BatteryManager>.fromOpaque(context).release()
+			print("Подписка на события питания активна.")
+		}
+	}
+	
+	private func handlePowerSourceChanged() {
+		guard let state = getBatteryState() else { return }
+		print("Батарея: \(state.capacity ?? 0)%, заряжается: \(state.isCharging != false)")
+		checkAndSendBatteryNotification(state: state)
+	}
+	
+	func getBatteryState() -> BatteryState? {
+		let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+		let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
+		
+		for source in sources {
+			if let description = IOPSGetPowerSourceDescription(snapshot, source).takeUnretainedValue() as? [String: Any] {
+				let batteryState = BatteryState(
+					capacity: description[kIOPSCurrentCapacityKey] as? Int,
+					maxCapacity: description[kIOPSMaxCapacityKey] as? Int,
+					powerSource: description[kIOPSPowerSourceStateKey] as? String,
+					isCharging: description[kIOPSIsChargingKey] as? Bool
+				)
+				return batteryState
+			}
+		}
+		return nil
+	}
+	
+		// MARK: - Notification Support
+	
+	private func requestNotificationPermission() {
+		UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+			if let error = error {
+				print("⚠️ Ошибка запроса разрешения на уведомления: \(error)")
+			} else {
+				print("✅ Уведомления \(granted ? "разрешены" : "запрещены")")
+			}
+		}
+	}
+	
+	private func checkAndSendBatteryNotification(state: BatteryState) {
+		guard let capacity = state.capacity,
+					let maxCapacity = state.maxCapacity,
+					maxCapacity > 0 else { return }
+		
+		let percentage = Int(Double(capacity) / Double(maxCapacity) * 100)
+		let isCharging = state.isCharging ?? false
+		
+			// Отправляем оповещение только один раз при достижении ≥80% и зарядке
+		if percentage >= 80 && isCharging && !notificationSentForBatteryLevel {
+			sendBatteryNotification(percentage: percentage)
+			notificationSentForBatteryLevel = true
+		} else if percentage < 80 {
+				// Сброс флага, когда батарея разряжается ниже 80%
+			notificationSentForBatteryLevel = false
+		}
+	}
+	
+	private func sendBatteryNotification(percentage: Int) {
+		let content = UNMutableNotificationContent()
+		content.title = "🔋 Батарея заряжена"
+		content.subtitle = "Достигнут уровень \(percentage)% — рекомендуется отключить зарядное устройство"
+		content.body = "Это поможет продлить срок службы аккумулятора."
+		content.sound = .default
+		content.categoryIdentifier = "battery.charge.full"
+		
+			// Use UNNotificationTimeDateTrigger for latest API\
+		let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+		let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
+		UNUserNotificationCenter.current().add(request) { error in
+			if let error = error {
+				print("❌ Ошибка при отправке уведомления: \(error)")
+			} else {
+				print("✅ Уведомление отправлено: Батарея — \(percentage)%")
+			}
+		}
+	}
 }
+
+
 
